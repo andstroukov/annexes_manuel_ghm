@@ -61,8 +61,7 @@ for (i in min(pages):max(pages)) {
     left_join(.,extra_pdf[[i]]%>%
                 filter(x>156,x<169)%>%
                 select(y,liste_exclu=text))%>%
-    select(cim,liste_exclu)%>%
-    mutate(page=i)
+    select(cim,liste_exclu)
   tab<-tab%>%
     bind_rows(.,tab1)%>%
     filter(!is.na(cim),!is.na(liste_exclu))
@@ -72,7 +71,7 @@ rm(tab1)
 tbl<-tab%>%
   mutate(cim1=str_replace(cim,"\\.",""))%>%
   filter(cim!="contenu")%>%
-  select(cim1,liste_exclu,page)
+  select(cim1,liste_exclu)
   
 #
 ## verif la différence ####
@@ -83,6 +82,6 @@ dif<-comp%>%
 
 # Export tableau vérifié Annexe 4 ###
 #
-write.csv2(tbl,file="tb1_annexe4.csv",row.names = F)
+write.csv2(tbl,file="tb1_annexe_4.csv",row.names = F)
 
 
