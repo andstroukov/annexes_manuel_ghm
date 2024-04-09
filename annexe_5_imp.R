@@ -3,21 +3,27 @@
 
 library(tidyverse)
 library(pdftools)
-
-# Importer csv pour comparer ####
-diag<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_1_liste_cma_et_diags_excluants.csv")
-#
-rac<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_2_liste_cma_et_rghm_excluantes.csv")
+library(nomensland)
+library(tictoc)
 # 
-# Extraction des données brutes du fichier PDF
+## Import CIM10
+rm(list = ls())
+tic()
+tb_cim_10_comp <-
+  nomensland::get_table("cim")%>%
+  filter(anseqta==2023) %>%
+  select(code,lib_long) %>%
+  arrange(code)
+#
+tb_lettre <- tibble(lettre = LETTERS, ordre = 1:length(LETTERS))
+#
+# Extraction des données brutes du fichier PDF ####
 
-# sous forme de large character ####
+# sous forme de large character
 #
 ex_pdf <- pdf_text(pdf ="C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
 #
-length(ex_pdf)# nb pages
-#
-# sous forme de large list ####
+# sous forme de large list
 extra_pdf<-pdf_data(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
 #
 # Trouver les numeros de pages ####
@@ -34,11 +40,7 @@ for (i in 1:length(ex_pdf)) {
     }
 rm(pages1)
 #
-str(pages)
-min(pages)
-max(pages)
-#
-# Separer Parties 1 et 2 de l'Annexe 5 ####
+# Separer Parties 1 et 2 de l'Annexe 5 #
 # Trouver la page avec mention "Partie 2" qui sépare les parties 5-1 et 5-2
 #
 for (i in min(pages):max(pages)) {
@@ -56,65 +58,7 @@ pages1<-pages%>%
 pages2<-pages%>%
   slice_tail(n=lim)
 #
-# Page test####
-#
-pg<-extra_pdf[[431]]
-
-# Plus compliqué que annexe 4 ou annexe 5-2
-# attention page 391 vers le haut: reste de la liste précédente (11) s'affiche toujours au dessus de la liste 12
-# ce qui peut fait attribuer par erreur les codes à la mauvaise liste
-# hypothèse : croiser l'extraction par ligne et l'extraction par coordonnées x,y ?
-#
-# Détail import partie 1####
-# d'abord, extraire les numéros de liste et leur valeur Y pour distribuer les codes
-# y ont la valeur max pour la dernière ligne
-pg<-extra_pdf[[391]]
-#
 # coordonnées x du numéro de liste: 85 ou 91 (2 chiffres)
-# coordonnées x du premier code de la liste: = 106, à partir de son y et jusqu'à y du numéro de liste - c'est 
-
-# y minimal de la page correspond au code avec x=106 et commençant par une lettre majuscule
-ymin<-pg%>%
-  filter(x==106,str_detect(text,"^[A-Z]"))%>%
-  select(ymin=y)%>%
-  arrange(ymin)
-ymin_p<-min(ymin$ymin)
-#
-str(ymin)
-# y max correspond à celui du numéro de liste indiqué dans la colonne de gauche;
-# il peut être faux pour la dernière ligne de la page si la liste se prolonge à la page suivante
-ymax<-pg%>%
-  filter(x>73,x<92,str_detect(text,"^\\s*[0-9]*\\s*$"))%>%
-  mutate(lst=as.integer(text))%>%
-  select(ymax=y,lst)%>%
-  arrange(ymax)
-str(ymax)
-range(ymax$lst)
-# valeurs Y min et max pour tester par la boucle "for"
-y_list<-ymin%>%
-  bind_cols(.,ymax)
-str(y_list)
-min_list=min(y_list$lst)
-#
-##  Codes de la page avec leur valeur y
-# pour la 2nde page, il ne faut pas limiter y>ymin car 2 lignes de codes de la liste de la page précédente
-# si l'exclusion de minuscules ajoutée [^a-z], alors codes de type "F0" sautent
-list_pg<-pg%>%
-  filter(str_detect(text,"^[A-Z]"),y<795)%>% # pour exclure la dernière ligne de texte
-  select(y,cod=text)
-#
-str(list_pg)
-min(list_pg$y)
-max(list_pg$y)
-#
-by=join_by(y >= ymin, y <= ymax)
-#
-## Codes diagnostics et liste d'exclusion
-# ajout de numéro de la page précédente si y min de code < y min de debut de liste
-full<-list_pg%>%
-  left_join(.,y_list,by)%>%
-  mutate(lst2=if_else(is.na(lst)&y<ymin_p,min_list-1,lst))
-#
 #
 ## liste de codes agrégés et de numéros de listes ####
 # 4 colonnes: liste et code(agrégés), coordonnées x et y
@@ -162,7 +106,7 @@ for (i in min(pages1):max(pages1)) {
 # le code suivant se trouve par le X minimal (=103) parmis les codes
 # et Y "pas + 1" à +11 ou +12 par rapport au précédent. C'est la coordonnée "Y" la plus proche:
 #
-# A . Le saut de ligne Même page ####
+# A . Le saut de ligne Même page #
 #
 by2=join_by(lst2,closest(y<y2)) # tiret et 2nd code à la même page
 
@@ -198,11 +142,13 @@ c3bis<-commune%>%
 commune2<-commune%>%
   bind_rows(.,c3)%>%
   bind_rows(.,c3bis)%>%
-  filter(!str_detect(cod,"-$"))
+  select(lst2,cod)%>%
+  distinct()%>%
+  filter(!str_detect(cod,"-$"),!str_detect(cod,"NA"))
 #
 # Preparer listes sans doublons pour 2 fonctions:
 ## A. avec tiret A4-A5
-
+#
 atir<-commune2%>%
   select(lst2,cod)%>%
   filter(str_detect(cod,"-"))
@@ -235,30 +181,50 @@ indice_fin <-
 tb_cim_10_comp$code[indice_debut:indice_fin] %>%
   paste0(collapse = " ")
 }
-# 
+#
+# remplacer les intervalles "A1-A5" par les vecteurs de codes "A1-A2-A3-A4-A5"
 at2<-at%>%
-  slice(979:979)%>% # ici, blocage car "R05-NA", problème tableau 3 bis incomplet et 3 avec "R05-NA"
   mutate(liste_cd=map_chr(.$cod,fn_ival))
 #
-# Problème: pour les listes 608 et 1018, les "-" à la fin n'ont pas été reperés.
-# repérés pour listes 142 et 506
-#
 ## B. sans tiret A40
-
-## Import CIM10
-library(nomensland)
+stir<-commune2%>%
+  select(lst2,cod)%>%
+  filter(!str_detect(cod,"-"))
+# remplacer les points
+stir$cod<-str_replace_all(stir$cod,rep_str)
 #
-tb_cim_10_comp <-
-  nomensland::get_table("cim")%>%
-  filter(anseqta==2023) %>%
-  select(code,lib_long) %>%
-  arrange(code)
-
-tb_lettre <- tibble(lettre = LETTERS, ordre = 1:length(LETTERS))
-
-
+fn_transfo_unique<- function(unique){
+  
+  tb_cim_10_comp$code[str_detect(string = tb_cim_10_comp$code,pattern = unique)] %>%
+    paste0(collapse = " ")
+}
+#
+stir2<-stir%>%
+  select(cod)%>%
+  distinct()%>%
+  mutate(liste_cd=map_chr(.$cod,fn_transfo_unique))
+#
+## versions verticale et horizontale ###
+# vecteurs chr horizontaux transformés en verticaux
+#
+horiz<-stir2%>%
+  bind_rows(.,at2)
+#
+commune2$cod<-str_replace_all(commune2$cod,rep_str)
+#
+reun<-commune2%>%
+  left_join(.,horiz)%>%
+  mutate(code_cim_10 = str_split(liste_cd," "))%>%
+  unnest(cols = c(code_cim_10))%>%
+  rename(liste_ex=lst2,cod_interv=cod,liste_cim_10=liste_cd)
+#
+# ecrire .csv trop long >1million238K lignes
+toc()# 50 sec
+#
+# au besoin, ne garder que les 2 colonnes: liste_ex et code_cim_10
+#
 ################
-
+#
 # Import Partie 2 ####
 # Extraction Annexe 5-2 de rghm/liste exclu ###
 # avec boucle for et selon position x
@@ -293,6 +259,12 @@ dif<-comp%>%
 # Export tableau vérifié Annexe 4 ###
 #
 write.csv2(tbl,file="tb1_annexe_5_1.csv",row.names = F)
+#
+#
+# Importer csv pour comparer ####
+diag<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_1_liste_cma_et_diags_excluants.csv")
+#
+rac<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_2_liste_cma_et_rghm_excluantes.csv")
 #
 # Function practicum ####
 library(gapminder)
