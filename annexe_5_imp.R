@@ -128,9 +128,9 @@ c3<-c1%>%
 # B. Le saut de page ####
 #
 # tiret et 2nd code à la page suivante: y ==73 & x==103
-#
+# 
 c3bis<-commune%>%
-  filter(str_detect(cod,"-$"),y>745,x>460)%>%
+  filter(str_detect(cod,"-$"),y>747,x>460)%>% # si y=747 alors avant dernière ligne et erreur!
   rename(cod1=cod)%>%
   left_join(.,commune%>%filter(y==73,x==103)%>%select(lst2,cod2=cod))%>%
   mutate(cod=paste0(cod1,cod2))%>%
@@ -218,15 +218,63 @@ reun<-commune2%>%
   unnest(cols = c(code_cim_10))%>%
   rename(liste_ex=lst2,cod_interv=cod,liste_cim_10=liste_cd)
 #
+str(reun)
+#
 # ecrire .csv trop long >1million238K lignes
+ann_5_1<-reun%>%
+  select(liste_ex,code_cim_10)%>%
+  distinct()
+str(ann_5_1)
+#
+write_csv2(ann_5_1,file = "ann_5_1.csv")
 toc()# 50 sec
 #
-# au besoin, ne garder que les 2 colonnes: liste_ex et code_cim_10
+diag<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_1_liste_cma_et_diags_excluants.csv")%>%
+  rename(liste=num_liste_exclusion_de_la_cma,code=code_cim_10_excluant_la_liste_de_cma)
+names(diag)
+vg_583<-diag%>%
+  filter(liste==583)%>%
+  select(code)%>%
+  arrange()%>%
+  pull()
+as_583<-ann_5_1%>%
+  filter(liste_ex==583)%>%
+  select(code_cim_10)%>%
+  arrange()%>%
+  pull()
+diff(as_583,vg_583)
+as_583[!(as_583 %in% vg_583)]
+arrange(as_583[str_detect(as_583,"B4")])
+vg_583[str_detect(vg_583,"B4")]
+as_583[str_detect(as_583,"B4")]
 #
-################
+df_vg<-diag%>%
+  count(liste)%>%
+  rename(vg=n)
+#
+df_as<-ann_5_1%>%
+  count(liste_ex)%>%
+  rename(liste=liste_ex,as=n)%>%
+  left_join(.,df_vg)%>%
+  mutate(delta=as-vg)%>%
+  filter(delta!=0)
+#
+str(df_as)
+#
+str(df_vg)
+#
+##################################################################################################################
 #
 # Import Partie 2 ####
 # Extraction Annexe 5-2 de rghm/liste exclu ###
+#
+# table racines
+tb_rghm <-
+  nomensland::get_table("ghm_rghm_regroupement") %>%
+  filter(anseqta==2023) %>%
+  select(racine,libelle_racine) %>% 
+  rename("code_racine"="racine","lib_racine"="libelle_racine")
+#
 # avec boucle for et selon position x
 #
 tab<-tibble(liste=NA,rghm=NA)
@@ -248,23 +296,101 @@ tbl<-tab%>%
   mutate(cim1=str_replace(cim,"\\.",""))%>%
   filter(cim!="contenu")%>%
   select(cim1,liste_exclu,page)
-  
 #
-## verif la différence ####
-# si certaines lignes ne sont pas importées
+# Remplacer les regroupements des racines GHM par les listes des racines GHM ####
+#
+## Remplacer les CMD par vecteur correspondant des racines
+# "CMD26" > "26C02 26M02..."
+cmd<-tab%>%
+  filter(str_detect(rghm,"^CMD"))%>%
+  mutate(cr=str_sub(rghm,-2))%>%
+  select(cr)%>%
+  distinct()%>%
+  pull()
+#
+for (i in cmd){
+  assign(paste0("CMD",i),tb_rghm%>%
+           select(code_racine)%>%
+           filter(str_sub(code_racine,1,2)==i)%>%
+           pull())
+}
+#
+## racines en C,K,M
+#
+codrac<-tab%>%
+  filter(str_detect(rghm,"Racines_en_"))%>%
+  mutate(cr=str_sub(rghm,-1))%>%
+  select(cr)%>%
+  distinct()%>%
+  pull()
+#
+for (i in codrac){
+  assign(paste0("r_",i),tb_rghm%>%
+           select(code_racine)%>%
+           filter(str_sub(code_racine,3,3)==i)%>%
+           pull())
+}
+#
+## Sous CMD (en C)
+#
+sous<-tab%>%
+  filter(str_detect(rghm,"Sous_CMD"))%>%
+  mutate(sr=str_sub(rghm,-4),sr2=str_replace(sr,"_",""))%>%
+  select(sr2)%>%
+  distinct()%>%
+  pull()
 
-dif<-comp%>%
-  anti_join(.,tbl)
-
+for (i in sous){
+  assign(paste0("s",i),tb_rghm%>%
+           select(code_racine)%>%
+           filter(str_sub(code_racine,1,3)==i)%>%
+           pull())
+}
+#
+## Remplacer les groupes par les listes obtenues ##
+#
+tab2<-tab%>%
+  mutate(r2=case_when(
+    str_detect(rghm,"^CMD")~str_c(CMD26,collapse = " "),
+    str_detect(rghm,"Racines_en_C")~str_c(r_C,collapse = " "),
+    str_detect(rghm,"Racines_en_K")~str_c(r_K,collapse = " "),
+    str_detect(rghm,"Racines_en_M")~str_c(r_M,collapse = " "),
+    str_detect(rghm,"Sous_CMD02")~str_c(s02C,collapse = " "),
+    str_detect(rghm,"Sous_CMD21")~str_c(s21C,collapse = " "),
+    str_detect(rghm,"Sous_CMD22")~str_c(s22C,collapse = " "),
+    TRUE~rghm),
+    racine = str_split(r2," "))%>%
+    unnest(cols = c(racine))
+#
+ann_5_2<-tab2%>%
+  select(liste_ex=liste,racine)%>%
+  distinct()
+str(ann_5_2)
+summary(ann_5_2)
+table(ann_5_2$liste_ex)
+#
+write_csv2(ann_5_2,"ann_5_2.csv")
+#
 # Export tableau vérifié Annexe 4 ###
 #
 write.csv2(tbl,file="tb1_annexe_5_1.csv",row.names = F)
 #
 #
 # Importer csv pour comparer ####
-diag<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_1_liste_cma_et_diags_excluants.csv")
+
 #
-rac<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_2_liste_cma_et_rghm_excluantes.csv")
+rac<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_2_liste_cma_et_rghm_excluantes.csv")%>%
+  rename(liste_e=1,racine=2)%>%
+  mutate(liste_ex_vg=as.character(liste_e),liste_e=NULL)%>%
+  relocate(liste_ex_vg,racine)
+str(rac)
+summary(rac)
+table(rac$liste_ex)
+r_C
+#
+all.equal(ann_5_2,rac)
+diff<-ann_5_2%>%
+  left_join(.,rac)
 #
 # Function practicum ####
 library(gapminder)
