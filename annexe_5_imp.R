@@ -7,8 +7,7 @@ library(nomensland)
 library(tictoc)
 # 
 ## Import CIM10
-rm(list = ls())
-tic()
+#
 tb_cim_10_comp <-
   nomensland::get_table("cim")%>%
   filter(anseqta==2023) %>%
@@ -58,49 +57,52 @@ pages1<-pages%>%
 pages2<-pages%>%
   slice_tail(n=lim)
 #
+##################################### Annexe 5-1 ##########################################
 # coordonnées x du numéro de liste: 85 ou 91 (2 chiffres)
 #
-## liste de codes agrégés et de numéros de listes ####
+## liste de codes agrégés et de numéros de listes ###
 # 4 colonnes: liste et code(agrégés), coordonnées x et y
 #
-by=join_by(y >= ymin, y <= ymax)
+by=join_by(y >= ymin, y <= ymax)# jointure par les coordonnées
+#
+## Import tableau avec coordonnées
 commune<-tibble(lst2=NA,cod=NA,x=NA,y=NA)
 #
 for (i in min(pages1):max(pages1)) {
   pg<-extra_pdf[[i]]
-  ymin<-pg%>%
+  ymin<-pg%>%     # valeur "y" min du code avec coordonnée x=103 
     filter(x==106,str_detect(text,"^[A-Z]"))%>%
     select(ymin=y)%>%
     arrange(ymin)
-  ymin_p<-min(ymin$ymin)
-  ymax<-pg%>%
+  ymin_p<-min(ymin$ymin) # valeur pour trouver fin de liste p. préced en haut de p. suivante
+  ymax<-pg%>%     # valeur "y" max au même niveau "y" que le numéro de liste (tout numérique)
     filter(x>73,x<92,str_detect(text,"^\\s*[0-9]*\\s*$"))%>%
     mutate(lst=as.integer(text))%>%
     select(ymax=y,lst)%>%
     arrange(ymax)
-  y_list<-ymin%>%
+  y_list<-ymin%>% # intervals ymin-ymax valeurs "y" pour une liste donnée
     bind_cols(.,ymax)
-  min_list=min(y_list$lst)
-  list_pg<-pg%>%
+  min_list=min(y_list$lst) # numéro liste minimale de la page donnée
+  list_pg<-pg%>%  # extraction codes
     filter(str_detect(text,"^[A-Z]"),y<795)%>% # pour exclure la dernière ligne de texte
     select(x,y,cod=text)
-  full<-list_pg%>%
-    left_join(.,y_list,by)%>%
-    mutate(lst2=if_else(is.na(lst)&y<ymin_p,min_list-1,lst))%>%
+  full<-list_pg%>% # ajout numéro de liste aux codes avec coordonnées de la page
+    left_join(.,y_list,by)%>% # jointure par y entre ymin et ymax
+    mutate(lst2=if_else(is.na(lst)&y<ymin_p,min_list-1,lst))%>% # numero liste = min-1 si abs
     select(lst2,cod,x,y)
-  commune<-commune%>%
+  commune<-commune%>% # enchainement des pages
     bind_rows(.,full)%>%
     filter(lst2>0)%>%
     distinct()
 }
 #
-## Nettoyage des codes agrégés ####
+## Nettoyage des codes agrégés "A3-A5" ###
 #
-## Recoller les intervalles "-" ####
+## Recoller les intervalles "-" ###
 # separés par: A. les saut de lignes
 #              B. les sauts Des pages
 #
-# pour la même liste, il faut recoller les tirets: "A1-" et "-B2" pour ne pas perdre le contenu du milieu
+# pour la même liste, il faut recoller les tirets: "A1-" et "B2" ("A1-B2") pour ne pas perdre le contenu du milieu
 # pour la liste 9, se voit pour 2 codes: B34.0 - B34.4 et R68.8-R70
 #  
 # le code suivant se trouve par le X minimal (=103) parmis les codes
@@ -118,9 +120,10 @@ c1<-commune%>%
 # 2nde partie de jointure "-" de la même page: x=103, delta y>=12
 c2<-commune%>%filter(x==103)
 
-# jointure par y plus proche
+# jointure par "y" superieur le plus proche
 c3<-c1%>%
   left_join(.,c2%>%rename(y2=y),by2)%>%
+# même liste, y sup le plus proche, même page; manquent code de fin pour listes 608 et 1218 
   left_join(.,c2%>%filter(y==73,x==103)%>%select(lst2,cod2=cod))%>%
   mutate(cod=if_else(!is.na(cod.y),paste0(cod.x,cod.y),paste0(cod.x,cod2)))%>%
   select(lst2,cod,x=x.x,y) # x et y de la 1re partie "A10-" 
@@ -370,8 +373,157 @@ summary(ann_5_2)
 table(ann_5_2$liste_ex)
 #
 write_csv2(ann_5_2,"ann_5_2.csv")
+########################## Annexe 5-2 Essai fonction / MAP ######################################################
 #
-# Export tableau vérifié Annexe 4 ###
+# Essai fonction et map
+#
+library(tidyverse)
+library(pdftools)
+library(nomensland)
+#
+# Extraction des données brutes du fichier PDF ####
+
+# sous forme de large character
+#
+ex_pdf <- pdf_text(pdf ="C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+#
+# sous forme de large list
+extra_pdf<-pdf_data(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+#
+# Trouver les numeros de pages ####
+# pour lesquelles "Annexe 5-" present: limiter aux pages utiles
+
+pages<-tibble(num=NA)
+
+for (i in 1:length(ex_pdf)) {
+  if (str_detect(ex_pdf[[i]],"Annexe 5-")==FALSE) {
+    next
+  }
+  pages1<-tibble(num=i)
+  pages<-rbind(pages,pages1)%>%filter(!is.na(num))
+}
+rm(pages1)
+#
+# Separer Parties 1 et 2 de l'Annexe 5 #
+# Trouver la page avec mention "Partie 2" qui sépare les parties 5-1 et 5-2
+#
+for (i in min(pages):max(pages)) {
+  if (str_detect(ex_pdf[[i]],"Partie 2")==FALSE) {
+    next
+  }
+  print(i)
+  lim=max(pages)-i+1
+}
+#
+# num pages annexe 5-1
+pages1<-pages%>%
+  slice_head(n=nrow(pages)-lim)
+# num pages annexe 5-2
+pages2<-pages%>%
+  slice_tail(n=lim)
+#
+tb_rghm <-
+  nomensland::get_table("ghm_rghm_regroupement") %>%
+  filter(anseqta==2023) %>%
+  select(racine,libelle_racine) %>% 
+  rename("code_racine"="racine","lib_racine"="libelle_racine")
+#
+pages2
+#
+# Fonction couvre toutes les 2 pages de l'annexe 5-2
+#
+fn_extraction_tableau_page_intermediare <- function(num_page){
+  tibble(ligne=
+           ex_pdf[[num_page]] %>%
+           str_split("\\n") %>%
+           unlist() )
+}
+# laisser les lignes commençant par espace(1 ou+) suivi de chiffre
+#
+extration_tableau_pages_intermediaires <- 
+  map_df(min(pages2):max(pages2),fn_extraction_tableau_page_intermediare)%>%
+  filter(str_detect(ligne,"^[:space:]+(?=[:digit:])"))
+#
+tb_a_modifier <-
+  extration_tableau_pages_intermediaires %>%
+  mutate(ligne_sans_espace_deb= str_replace_all(string  = ligne,pattern="^ *",replacement = ""))%>%
+  separate(ligne_sans_espace_deb,c("num_liste_exclusion","liste_rghm_exclusion"),sep = " ",extra="merge")%>%
+  mutate(liste_rghm_exclusion = str_split(liste_rghm_exclusion," "),ligne=NULL)%>%
+  unnest(cols = c(liste_rghm_exclusion))
+#
+# Fonction transformation regroupement en liste de racines GHM
+fn_transfo_critere_en_liste <- function(critere_rghm){
+  
+  
+  if(critere_rghm %in% tb_rghm$code_racine){res_rghm <-  critere_rghm}
+  
+  if(critere_rghm == "CMD26"){
+    res_rghm <-  
+      tb_rghm %>%
+      filter(substr(code_racine,1,2)=="26") %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }
+  if(critere_rghm == "Racines_en_C"){
+    res_rghm <-  
+      tb_rghm %>%
+      filter(substr(code_racine,3,3)=="C") %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }
+  
+  if(critere_rghm == "Racines_en_K"){
+    res_rghm <-  
+      tb_rghm %>%
+      filter(substr(code_racine,3,3)=="K") %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }
+  
+  if(critere_rghm == "Racines_en_M"){
+    res_rghm <-  
+      tb_rghm %>%
+      filter(substr(code_racine,3,3)=="M") %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }  
+  
+  if(str_detect(critere_rghm,"Sous_CMD")==TRUE){
+    sousracine<-paste0(str_sub(critere_rghm,9,10),str_sub(critere_rghm,12,12))
+    res_ghm<-tb_rghm%>%
+      filter(str_sub(code_racine,1,3)==sousracine)%>%
+      pull(code_racine)%>%
+      paste0(collapse = " ")
+  } 
+  
+  res_rghm
+  
+}
+############ PROBLEME AVEC RACCOURCISSEMENT DE FONCTION ######################
+#
+tb_pour_export_annexe_5_2_liste_cma_et_rghm_excluantes <-tb_a_modifier %>%
+  mutate(liste_rghm_exclusion = map_chr(.$liste_rghm_exclusion,fn_transfo_critere_en_liste))
+#
+# raccourcissement fonction :
+if(str_detect(critere_rghm,"Sous_CMD")==TRUE){
+  res_ghm<-tb_rghm%>%
+    filter(str_sub(code_racine,1,2)==str_sub(crt,9,10),
+           str_sub(code_racine,3,3)==str_sub(crt,12,12))%>%
+    pull(code_racine)%>%
+    paste0(collapse = " ")
+} 
+
+crt<-c("Sous_CMD21_C")
+str_detect(crt,"Sous_CMD")
+(sousracine<-paste0(str_sub(crt,9,10),str_sub(crt,12,12)))
+#
+(res_ghm<-tb_rghm%>%
+  filter(str_sub(code_racine,1,2)==str_sub(crt,9,10),
+         str_sub(code_racine,3,3)==str_sub(crt,12,12))%>%
+    pull(code_racine)%>%
+    paste0(collapse = " "))
+#
+# Export tableau vérifié Annexe 4 ##############################################
 #
 write.csv2(tbl,file="tb1_annexe_5_1.csv",row.names = F)
 #
