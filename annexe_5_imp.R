@@ -10,9 +10,10 @@ library(nomensland)
 tb_cim_10_comp <-
   nomensland::get_table("cim")%>%
   filter(anseqta==2023) %>%
-  select(code,lib_long) %>%
+  select(code) %>% # sans libellé "lib_long"
   arrange(code)
 #
+# Lettres dans l'ordre pour retrouver les numéros des listes
 tb_lettre <- tibble(lettre = LETTERS, ordre = 1:length(LETTERS))
 #
 # Extraction des données brutes du fichier PDF ####
@@ -56,7 +57,11 @@ pages1<-pages%>%
 pages2<-pages%>%
   slice_tail(n=lim)
 #
-##################################### Annexe 5-1 ##########################################
+###############################################################################
+#                                     ANNEXE
+#                                     5-1
+###############################################################################
+#
 # coordonnées x du numéro de liste: 85 ou 91 (2 chiffres)
 #
 ## liste de codes agrégés et de numéros de listes ###
@@ -95,7 +100,7 @@ for (i in min(pages1):max(pages1)) {
     distinct()
 }
 #
-## Nettoyage des codes agrégés "A3-A5" ###
+## Nettoyage des codes agrégés (p ex "A3-A5") ###
 #
 ## Recoller les intervalles "-" ###
 # separés par: A. les saut de lignes
@@ -109,7 +114,7 @@ for (i in min(pages1):max(pages1)) {
 #
 # A . Le saut de ligne Même page #
 #
-by2=join_by(lst2,closest(y<y2)) # tiret et 2nd code à la même page
+by2=join_by(lst2,closest(y<y2)) # jointure sur (tiret + 2nd code à la même page)
 
 # 1re partie de la jointure "-" de la même page: se termine par "-"
 # y=756 ou 758, pas concerné, c'est le saut de page
@@ -159,7 +164,7 @@ atir<-commune2%>%
 rep_str=c("\\*"="0","\\."="")
 atir$cod<-str_replace_all(atir$cod,rep_str)
 #
-# laisser les combines uniques
+# laisser les combines/couples/intervalles des codes uniques
 at<-atir%>%
   select(cod)%>%
   distinct()
@@ -195,6 +200,7 @@ stir<-commune2%>%
 # remplacer les points
 stir$cod<-str_replace_all(stir$cod,rep_str)
 #
+# Fonction transformation de code(père) CIM (p ex A41)
 fn_transfo_unique<- function(unique){
   
   tb_cim_10_comp$code[str_detect(string = tb_cim_10_comp$code,pattern = unique)] %>%
@@ -212,7 +218,7 @@ stir2<-stir%>%
 horiz<-stir2%>%
   bind_rows(.,at2)
 #
-commune2$cod<-str_replace_all(commune2$cod,rep_str)
+commune2$cod<-str_replace_all(commune2$cod,rep_str) # rep_str cf ligne 164
 #
 reun<-commune2%>%
   left_join(.,horiz)%>%
@@ -229,41 +235,7 @@ ann_5_1<-reun%>%
 str(ann_5_1)
 #
 write_csv2(ann_5_1,file = "ann_5_1.csv")
-toc()# 50 sec
-#
-diag<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_1_liste_cma_et_diags_excluants.csv")%>%
-  rename(liste=num_liste_exclusion_de_la_cma,code=code_cim_10_excluant_la_liste_de_cma)
-names(diag)
-vg_583<-diag%>%
-  filter(liste==583)%>%
-  select(code)%>%
-  arrange()%>%
-  pull()
-as_583<-ann_5_1%>%
-  filter(liste_ex==583)%>%
-  select(code_cim_10)%>%
-  arrange()%>%
-  pull()
-diff(as_583,vg_583)
-as_583[!(as_583 %in% vg_583)]
-arrange(as_583[str_detect(as_583,"B4")])
-vg_583[str_detect(vg_583,"B4")]
-as_583[str_detect(as_583,"B4")]
-#
-df_vg<-diag%>%
-  count(liste)%>%
-  rename(vg=n)
-#
-df_as<-ann_5_1%>%
-  count(liste_ex)%>%
-  rename(liste=liste_ex,as=n)%>%
-  left_join(.,df_vg)%>%
-  mutate(delta=as-vg)%>%
-  filter(delta!=0)
-#
-str(df_as)
-#
-str(df_vg)
+# 56.81 sec
 #
 ##################################################################################################################
 #               ANNEXE  
