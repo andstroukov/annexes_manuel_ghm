@@ -4,7 +4,6 @@
 library(tidyverse)
 library(pdftools)
 library(nomensland)
-library(tictoc)
 # 
 ## Import CIM10
 #
@@ -267,17 +266,137 @@ str(df_as)
 str(df_vg)
 #
 ##################################################################################################################
+#               ANNEXE  
+#               5-2
+########################## ########################################################################
 #
-# Import Partie 2 ####
-# Extraction Annexe 5-2 de rghm/liste exclu ###
+# 2 procédés: 1.avec boucles "for" et 2.avec fonction + "map"
 #
-# table racines
+# Partie commune des 2 procédés
+#
+library(tidyverse)
+library(pdftools)
+library(nomensland)
+library(tictoc)
+#
+# Extraction des données brutes du fichier PDF ####
+
+# sous forme de large character
+#
+ex_pdf <- pdf_text(pdf ="C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+#
+# sous forme de large list
+#
+extra_pdf<-pdf_data(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+#
+# Trouver les numeros de pages ####
+# pour lesquelles "Annexe 5-" present: limiter aux pages utiles
+
+pages<-tibble(num=NA)
+
+for (i in 1:length(ex_pdf)) {
+  if (str_detect(ex_pdf[[i]],"Annexe 5-")==FALSE) {
+    next
+  }
+  pages1<-tibble(num=i)
+  pages<-rbind(pages,pages1)%>%filter(!is.na(num))
+}
+rm(pages1)
+#
+# Separer Parties 1 et 2 de l'Annexe 5 #
+# Trouver la page avec mention "Partie 2" qui sépare les parties 5-1 et 5-2
+#
+for (i in min(pages):max(pages)) {
+  if (str_detect(ex_pdf[[i]],"Partie 2")==FALSE) {
+    next
+  }
+  print(i)
+  lim=max(pages)-i+1
+}
+#
+# num pages annexe 5-1
+pages1<-pages%>%
+  slice_head(n=nrow(pages)-lim)
+# num pages annexe 5-2
+pages2<-pages%>%
+  slice_tail(n=lim)
+#
+### Tableau des racines de GHM #
 tb_rghm <-
   nomensland::get_table("ghm_rghm_regroupement") %>%
   filter(anseqta==2023) %>%
-  select(racine,libelle_racine) %>% 
-  rename("code_racine"="racine","lib_racine"="libelle_racine")
+  select(racine) %>% 
+  rename("code_racine"="racine")
 #
+pages2
+#
+## Fonction extraction toutes les 2 pages de l'annexe 5-2
+#
+fn_extract_tab_pages <- function(num_page){
+  tibble(ligne=
+           ex_pdf[[num_page]] %>%
+           str_split("\\n") %>%
+           unlist() )
+}
+# laisser les lignes commençant par espace(1 ou+) suivi de chiffre
+#
+extr_tab_pages <- 
+  map_df(min(pages2):max(pages2),fn_extract_tab_pages)%>%
+  filter(str_detect(ligne,"^[:space:]+(?=[:digit:])"))
+#
+tb_a_modifier <-
+  extr_tab_pages %>%
+  mutate(ligne_sans_espace_deb= str_replace_all(string  = ligne,pattern="^ *",replacement = ""))%>%
+  separate(ligne_sans_espace_deb,c("num_liste_exclusion","liste_rghm_exclusion"),sep = " ",extra="merge")%>%
+  mutate(liste_rghm_exclusion = str_split(liste_rghm_exclusion," "),ligne=NULL)%>%
+  unnest(cols = c(liste_rghm_exclusion))
+#
+# fonction transformation regroupement en racine 
+#
+fn_tf <- function(lst){
+  
+  if(lst %in% tb_rghm$code_racine){res_rghm <-  lst}
+  
+  if(str_sub(lst,1,3) == "CMD"){
+    res_rghm <-  
+      tb_rghm %>%
+      filter(str_sub(code_racine,1,2)==str_sub(lst,4,5)) %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }
+  if(str_detect(lst,"Racines_en_")==TRUE){
+    res_rghm <-
+      tb_rghm %>%
+      filter(str_sub(code_racine,3,3)==str_sub(lst,12,12)) %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }
+  
+  if(str_detect(lst,"Sous_CMD")==TRUE){
+    res_rghm <-
+      tb_rghm %>%
+      filter(str_sub(code_racine,1,2)==str_sub(lst,9,10),
+             str_sub(code_racine,3,3)==str_sub(lst,12,12)) %>%
+      pull(code_racine) %>%
+      paste0(collapse = " ")
+  }
+  
+  res_rghm
+  
+}
+#
+tb_annexe_5_2 <-tb_a_modifier %>%
+  mutate(liste_rghm_exclusion = map_chr(.$liste_rghm_exclusion,fn_tf))%>%
+  mutate(liste_rghm_exclusion = str_split(liste_rghm_exclusion," ")) %>%
+  unnest(cols = c(liste_rghm_exclusion)) %>%
+  rename("num_liste_exclusion_de_la_cma"="num_liste_exclusion","code_rghm_excluant_la_liste_de_cma"="liste_rghm_exclusion") %>%
+  distinct()
+#
+## Export tableau Annexe 5 _ 2 #
+#
+write.csv2(tb_annexe_5_2,file="tb1_annexe_5_2.csv",row.names = F)
+#
+########## Annexe 5-2: Autre procédé (pdf_table, boucle for) ################################################
 # avec boucle for et selon position x
 #
 tab<-tibble(liste=NA,rghm=NA)
@@ -294,11 +413,6 @@ for (i in min(pages2):max(pages2)) {
     filter(!is.na(liste))
 }
 rm(tab1)
-#
-tbl<-tab%>%
-  mutate(cim1=str_replace(cim,"\\.",""))%>%
-  filter(cim!="contenu")%>%
-  select(cim1,liste_exclu,page)
 #
 # Remplacer les regroupements des racines GHM par les listes des racines GHM ####
 #
@@ -363,271 +477,10 @@ tab2<-tab%>%
     str_detect(rghm,"Sous_CMD22")~str_c(s22C,collapse = " "),
     TRUE~rghm),
     racine = str_split(r2," "))%>%
-    unnest(cols = c(racine))
+  unnest(cols = c(racine))
 #
 ann_5_2<-tab2%>%
   select(liste_ex=liste,racine)%>%
   distinct()
-str(ann_5_2)
-summary(ann_5_2)
-table(ann_5_2$liste_ex)
 #
 write_csv2(ann_5_2,"ann_5_2.csv")
-########################## Annexe 5-2 Essai fonction / MAP ######################################################
-#
-# Essai fonction et map
-#
-library(tidyverse)
-library(pdftools)
-library(nomensland)
-#
-# Extraction des données brutes du fichier PDF ####
-
-# sous forme de large character
-#
-ex_pdf <- pdf_text(pdf ="C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
-#
-# sous forme de large list
-extra_pdf<-pdf_data(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
-#
-# Trouver les numeros de pages ####
-# pour lesquelles "Annexe 5-" present: limiter aux pages utiles
-
-pages<-tibble(num=NA)
-
-for (i in 1:length(ex_pdf)) {
-  if (str_detect(ex_pdf[[i]],"Annexe 5-")==FALSE) {
-    next
-  }
-  pages1<-tibble(num=i)
-  pages<-rbind(pages,pages1)%>%filter(!is.na(num))
-}
-rm(pages1)
-#
-# Separer Parties 1 et 2 de l'Annexe 5 #
-# Trouver la page avec mention "Partie 2" qui sépare les parties 5-1 et 5-2
-#
-for (i in min(pages):max(pages)) {
-  if (str_detect(ex_pdf[[i]],"Partie 2")==FALSE) {
-    next
-  }
-  print(i)
-  lim=max(pages)-i+1
-}
-#
-# num pages annexe 5-1
-pages1<-pages%>%
-  slice_head(n=nrow(pages)-lim)
-# num pages annexe 5-2
-pages2<-pages%>%
-  slice_tail(n=lim)
-#
-tb_rghm <-
-  nomensland::get_table("ghm_rghm_regroupement") %>%
-  filter(anseqta==2023) %>%
-  select(racine,libelle_racine) %>% 
-  rename("code_racine"="racine","lib_racine"="libelle_racine")
-#
-pages2
-#
-# Fonction couvre toutes les 2 pages de l'annexe 5-2
-#
-fn_extraction_tableau_page_intermediare <- function(num_page){
-  tibble(ligne=
-           ex_pdf[[num_page]] %>%
-           str_split("\\n") %>%
-           unlist() )
-}
-# laisser les lignes commençant par espace(1 ou+) suivi de chiffre
-#
-extration_tableau_pages_intermediaires <- 
-  map_df(min(pages2):max(pages2),fn_extraction_tableau_page_intermediare)%>%
-  filter(str_detect(ligne,"^[:space:]+(?=[:digit:])"))
-#
-tb_a_modifier <-
-  extration_tableau_pages_intermediaires %>%
-  mutate(ligne_sans_espace_deb= str_replace_all(string  = ligne,pattern="^ *",replacement = ""))%>%
-  separate(ligne_sans_espace_deb,c("num_liste_exclusion","liste_rghm_exclusion"),sep = " ",extra="merge")%>%
-  mutate(liste_rghm_exclusion = str_split(liste_rghm_exclusion," "),ligne=NULL)%>%
-  unnest(cols = c(liste_rghm_exclusion))
-#
-# Fonction transformation regroupement en liste de racines GHM
-fn_transfo_critere_en_liste <- function(critere_rghm){
-  
-  
-  if(critere_rghm %in% tb_rghm$code_racine){res_rghm <-  critere_rghm}
-  
-  if(critere_rghm == "CMD26"){
-    res_rghm <-  
-      tb_rghm %>%
-      filter(substr(code_racine,1,2)=="26") %>%
-      pull(code_racine) %>%
-      paste0(collapse = " ")
-  }
-  if(critere_rghm == "Racines_en_C"){
-    res_rghm <-  
-      tb_rghm %>%
-      filter(substr(code_racine,3,3)=="C") %>%
-      pull(code_racine) %>%
-      paste0(collapse = " ")
-  }
-  
-  if(critere_rghm == "Racines_en_K"){
-    res_rghm <-  
-      tb_rghm %>%
-      filter(substr(code_racine,3,3)=="K") %>%
-      pull(code_racine) %>%
-      paste0(collapse = " ")
-  }
-  
-  if(critere_rghm == "Racines_en_M"){
-    res_rghm <-  
-      tb_rghm %>%
-      filter(substr(code_racine,3,3)=="M") %>%
-      pull(code_racine) %>%
-      paste0(collapse = " ")
-  }  
-  
-  if(str_detect(critere_rghm,"Sous_CMD")==TRUE){
-    sousracine<-paste0(str_sub(critere_rghm,9,10),str_sub(critere_rghm,12,12))
-    res_ghm<-tb_rghm%>%
-      filter(str_sub(code_racine,1,3)==sousracine)%>%
-      pull(code_racine)%>%
-      paste0(collapse = " ")
-  } 
-  
-  res_rghm
-  
-}
-############ PROBLEME AVEC RACCOURCISSEMENT DE FONCTION ######################
-#
-tb_pour_export_annexe_5_2_liste_cma_et_rghm_excluantes <-tb_a_modifier %>%
-  mutate(liste_rghm_exclusion = map_chr(.$liste_rghm_exclusion,fn_transfo_critere_en_liste))
-#
-# raccourcissement fonction :
-if(str_detect(critere_rghm,"Sous_CMD")==TRUE){
-  res_ghm<-tb_rghm%>%
-    filter(str_sub(code_racine,1,2)==str_sub(crt,9,10),
-           str_sub(code_racine,3,3)==str_sub(crt,12,12))%>%
-    pull(code_racine)%>%
-    paste0(collapse = " ")
-} 
-
-crt<-c("Sous_CMD21_C")
-str_detect(crt,"Sous_CMD")
-(sousracine<-paste0(str_sub(crt,9,10),str_sub(crt,12,12)))
-#
-(res_ghm<-tb_rghm%>%
-  filter(str_sub(code_racine,1,2)==str_sub(crt,9,10),
-         str_sub(code_racine,3,3)==str_sub(crt,12,12))%>%
-    pull(code_racine)%>%
-    paste0(collapse = " "))
-#
-# Export tableau vérifié Annexe 4 ##############################################
-#
-write.csv2(tbl,file="tb1_annexe_5_1.csv",row.names = F)
-#
-#
-# Importer csv pour comparer ####
-
-#
-rac<-read.csv2("~/R/Manuel_GHM_extractions_annexes/tb_annexe_5_2_liste_cma_et_rghm_excluantes.csv")%>%
-  rename(liste_e=1,racine=2)%>%
-  mutate(liste_ex_vg=as.character(liste_e),liste_e=NULL)%>%
-  relocate(liste_ex_vg,racine)
-str(rac)
-summary(rac)
-table(rac$liste_ex)
-r_C
-#
-all.equal(ann_5_2,rac)
-diff<-ann_5_2%>%
-  left_join(.,rac)
-#
-# Function practicum ####
-library(gapminder)
-library(ggplot2)
-library(tidyverse)
-#
-j_country <- "Australia" # pick, but do not hard wire, an example
-(j_dat <- gapminder %>% 
-    filter(country == j_country))
-unique(gapminder$country)
-p <- ggplot(j_dat, aes(x = year, y = lifeExp))
-p + geom_point() + geom_smooth(method = "lm", se = FALSE)
-j_fit <- lm(lifeExp ~ year, j_dat)
-coef(j_fit)
-j_fit <- lm(lifeExp ~ I(year - 1952), j_dat)
-coef(j_fit)
-#
-le_lin_fit <- function(dat, offset = 1952) {
-  the_fit <- lm(lifeExp ~ I(year - offset), dat)
-  coef(the_fit)
-}
-le_lin_fit(j_dat)
-#
-le_lin_fit <- function(dat, offset = 1952) {
-  the_fit <- lm(lifeExp ~ I(year - offset), dat)
-  setNames(coef(the_fit), c("intercept", "slope"))
-}
-le_lin_fit(1954)
-#
-j_country <- "Zimbabwe"
-j_dat <- gapminder %>% filter(country == j_country)
-#
-j_dat<-gapminder%>%filter(country=="Zimbabwe")
-#
-p <- ggplot(j_dat, aes(x = year, y = lifeExp))
-#
-p + geom_point() + geom_smooth(method = "lm", se = FALSE)
-le_lin_fit(j_dat)
-#
-library(tidyverse)
-# purr:: nest data
-n_iris<-iris%>%
-  group_by(Species)%>%
-  nest()
-str(n_iris)
-n_iris$data[[2]]
-n_iris$data[2]
-n_iris$data[n_iris$Species=="versicolor"]%>%
-  print(n=3)
-n_iris%>%
-  unnest()
-# work with lists
-mod_fun <- function(df)
-  lm(Sepal.Length ~ ., data = df)
-m_iris <- n_iris %>%
-  mutate(model = map(data, mod_fun))
-str(m_iris)
-m_iris$model[[2]]
-#
-# simplify
-b_fun <- function(mod)
-  coefficients(mod)[[1]]
-m_iris %>% transmute(Species,
-                     beta = map_dbl(model, b_fun))
-help(tribble)
-trb<-tribble(
-  ~x,  ~y,
-  "a", 1:3,
-  "b", 4:6
-)
-str(trb)
-trb2<-tibble(max = c(3, 4, 5), seq = list(1:3, 1:4, 1:5))
-trb3<-enframe(list('3'=1:3, '4'=1:4, '5'=1:5), 'max', 'seq')
-str(trb3)
-mtcars%>%head()
-str(mtcars)
-mtcars %>% mutate(seq = map(cyl, seq))
-#
-sm<-mtcars %>% group_by(cyl) %>%
-  summarise(q = list(quantile(mpg)))
-sm$q[[2]]
-ni2<-n_iris %>% mutate(n = map(data, dim))
-ni2$n[3]
-#
-m_iris %>% mutate(n = map2(data, model, list))
-#
-nk2<-m_iris %>% mutate(n = map2(data, model, list))
-nk2$n[[2]][[2]]
