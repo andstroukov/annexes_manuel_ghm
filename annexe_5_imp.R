@@ -4,9 +4,13 @@
 library(tidyverse)
 library(pdftools)
 library(nomensland)
+library(tictoc)
 # 
 ## Import CIM10
 #
+rm(list = ls())
+#
+tic()
 tb_cim_10_comp <-
   nomensland::get_table("cim")%>%
   filter(anseqta==2023) %>%
@@ -17,13 +21,15 @@ tb_cim_10_comp <-
 tb_lettre <- tibble(lettre = LETTERS, ordre = 1:length(LETTERS))
 #
 # Extraction des données brutes du fichier PDF ####
-
-# sous forme de large character
 #
-ex_pdf <- pdf_text(pdf ="C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+# sous forme de large character
+an<-2024
+#
+ex_pdf <- pdf_text(pdf = paste0("C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_",an,"_vol_1.pdf"))
 #
 # sous forme de large list
-extra_pdf<-pdf_data(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+#
+extra_pdf<-pdf_data(paste0(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_",an,"_vol_1.pdf"))
 #
 # Trouver les numeros de pages ####
 # pour lesquelles "Annexe 5-" present: limiter aux pages utiles
@@ -100,11 +106,85 @@ for (i in min(pages1):max(pages1)) {
     distinct()
 }
 #
+# Faire tableau agrégé num.page-num.liste(avec son y)
+pali<-tibble(pg=NA,li=NA,y=NA)
+#
+for (i in min(pages1):max(pages1)) {
+  pg<-extra_pdf[[i]]
+foe<-pg%>%
+  filter(x>73,x<92,str_detect(text,"^\\s*[0-9]*\\s*$"))%>%
+  mutate(li=as.integer(text),pg=i)%>%
+  select(pg,li,y)%>%
+  arrange(pg)
+pali<-pali%>%
+  bind_rows(.,foe)
+}
+
+# Fonction pour extraire les codes du pdf
+#
+fn_extra_page <- function(num_page){
+  tb1<-tibble(page=num_page, # numero de page
+           extra_pdf[[num_page]] %>% # numero de liste avec son "y"
+           filter(x>73,x<92,str_detect(text,"^\\s*[0-9]*\\s*$"))%>%
+           select(liste=text,ymax_liste=y)
+           )
+  tb2<-tibble(page=num_page, # numero de page
+         extra_pdf[[num_page]] %>% # cod avec son "y"
+           filter(str_detect(text,"^[A-Z]"),y<795,x==106)) # pour exclure la dernière ligne de texte
+  tb3<-tb2%>%
+    group_by(page)%>%
+    mutate(list_page_haut=min(y))%>%
+    ungroup()%>%
+    select(ymin_liste=y,list_page_haut)
+    
+  tb1%>%
+    cbind(tb3)
+}
+#
+fn_extra_cod<-function(num_page) {
+  tibble(page=num_page,extra_pdf[[num_page]]%>%
+           filter(str_detect(text,"^[A-Z]"),y<795))
+}
+#
+extra_pages <- 
+  map_df(min(pages1):(min(pages1)+1),fn_extra_page)
+#
+extra_cod <- 
+  map_df(min(pages1):(min(pages1)+1),fn_extra_cod)
+# pour une page donnée, pouvoir joindre les 2 tables en utilisant les y min et y max
+# prevoir jointure conditionnelle
+#
+by=join_by(page,y >= ymin_liste, y <= ymax_liste)
+#
+ex_2<-extra_cod%>%
+  left_join(.,extra_pages,by)%>%
+  group_by(page)%>%
+  mutate(ymin_page=min(ymin_liste,na.rm = TRUE),
+         listmin_page=as.integer(min(liste,na.rm=TRUE)),
+         liste=if_else(is.na(liste),listmin_page-1,liste))%>%
+  ungroup()
+str(ex_2)
+#
+# nettoyer les listes pour ne laisser que les codes ###
+#
+ex_co<-extra_cod%>%
+  filter(deb_ls_y==1)%>%
+  group_by(page)%>%
+  mutate(list_page_haut=min(y))%>%
+  select(page,ymin_liste=y)%>%
+  ungroup()
+
+# ambar
+%>%
+  filter(!str_detect(ligne,"Liste")) %>%
+  filter(!str_detect(ligne,"Manuel")) %>%
+  filter(ligne!="") 
+#
 ## Nettoyage des codes agrégés (p ex "A3-A5") ###
 #
 ## Recoller les intervalles "-" ###
-# separés par: A. les saut de lignes
-#              B. les sauts Des pages
+# separés par: - les saut de lignes
+#              - les sauts Des pages
 #
 # pour la même liste, il faut recoller les tirets: "A1-" et "B2" ("A1-B2") pour ne pas perdre le contenu du milieu
 # pour la liste 9, se voit pour 2 codes: B34.0 - B34.4 et R68.8-R70
@@ -117,60 +197,65 @@ for (i in min(pages1):max(pages1)) {
 by2=join_by(lst2,closest(y<y2)) # jointure sur (tiret + 2nd code à la même page)
 
 # 1re partie de la jointure "-" de la même page: se termine par "-"
-# y=756 ou 758, pas concerné, c'est le saut de page
-c1<-commune%>%
-  filter(str_detect(cod,"-$"),y<756)
-
-# 2nde partie de jointure "-" de la même page: x=103, delta y>=12
-c2<-commune%>%filter(x==103)
-
-# jointure par "y" superieur le plus proche
-c3<-c1%>%
-  left_join(.,c2%>%rename(y2=y),by2)%>%
-# même liste, y sup le plus proche, même page; manquent code de fin pour listes 608 et 1218 
-  left_join(.,c2%>%filter(y==73,x==103)%>%select(lst2,cod2=cod))%>%
-  mutate(cod=if_else(!is.na(cod.y),paste0(cod.x,cod.y),paste0(cod.x,cod2)))%>%
-  select(lst2,cod,x=x.x,y) # x et y de la 1re partie "A10-" 
-
-# B. Le saut de page ####
-#
-# tiret et 2nd code à la page suivante: y ==73 & x==103
 # 
-c3bis<-commune%>%
-  filter(str_detect(cod,"-$"),y>747,x>460)%>% # si y=747 alors avant dernière ligne et erreur!
-  rename(cod1=cod)%>%
-  left_join(.,commune%>%filter(y==73,x==103)%>%select(lst2,cod2=cod))%>%
-  mutate(cod=paste0(cod1,cod2))%>%
-  select(lst2,cod,x,y)
+# preparation: reperer y max (fin page) et 
+# y min  + x min (code debut page suivante)
+#
+c1<-commune%>%
+  group_by(lst2)%>%
+  mutate(ymax=max(y),ymin=min(y),xmin=min(x))%>%
+  ungroup()
+#
+# saut de ligne avec tiret
+mi_page<-c1%>%
+  filter(str_detect(cod,"-$"),y<ymax)%>% # si y=ymax c'est le saut de page
+  select(lst2,cod1=cod,y)%>%
+  left_join(.,c1%>%
+              filter(x==xmin)%>%
+              select(lst2,cod2=cod,y2=y),by2)%>%
+  mutate(cod=paste0(cod1,cod2))
 
+# Le saut de page avec tiret
+#
+# tiret et 2nd code à la page suivante:
+# il faut s'assurer que "y" du code "A-" ait un "y" maximal pour la liste donnée.
+# et que le code de fin ait un "x" et "y" minimaux pour cette même liste,
+#  càd se trouve en debut de page et en debut de ligne
+fin_page<-c1%>%
+  filter(str_detect(cod,"-$"),y==ymax)%>%
+  rename(cod1=cod)%>%
+  left_join(.,c1%>%
+              filter(x==xmin,y==ymin)%>%
+              select(lst2,cod2=cod))%>%
+  mutate(cod=paste0(cod1,cod2))
+#
+# Recuperer les 2ndes partiets de codes pour les deduire de la transformation (redondance)
+rdd<-mi_page%>%
+  bind_rows(.,fin_page)%>%
+  select(lst2,cod=cod2)%>%
+  distinct()
+#
 # Commune avec liste "-" rompues et reconstituées ####
 #
 # supprimer les "-" à la fin: "Q40-"
 commune2<-commune%>%
-  bind_rows(.,c3)%>%
-  bind_rows(.,c3bis)%>%
+  anti_join(.,rdd)%>%
+  bind_rows(.,mi_page)%>%
+  bind_rows(.,fin_page)%>%
   select(lst2,cod)%>%
   distinct()%>%
-  filter(!str_detect(cod,"-$"),!str_detect(cod,"NA"))
+  filter(!str_detect(cod,"-$"))
+#
+# replacer les points/asterisque
+rep_str=c("\\*"="0","\\."="")
+commune2$cod<-str_replace_all(commune2$cod,rep_str)
 #
 # Preparer listes sans doublons pour 2 fonctions:
 ## A. avec tiret A4-A5
 #
-atir<-commune2%>%
-  select(lst2,cod)%>%
-  filter(str_detect(cod,"-"))
-#
-# replacer les points/asterisc
-rep_str=c("\\*"="0","\\."="")
-atir$cod<-str_replace_all(atir$cod,rep_str)
-#
 # laisser les combines/couples/intervalles des codes uniques
-at<-atir%>%
-  select(cod)%>%
-  distinct()
 #
 ## fonction pour sortir la totalité des codes CIM10 de l'intervalle
-# A1-A5
 #
 fn_ival <- function(cod){
 code_depart <-
@@ -189,16 +274,14 @@ tb_cim_10_comp$code[indice_debut:indice_fin] %>%
   paste0(collapse = " ")
 }
 #
-# remplacer les intervalles "A1-A5" par les vecteurs de codes "A1-A2-A3-A4-A5"
-at2<-at%>%
+# remplacer les intervalles "A1-A5" par les vecteurs de codes "A1 A2 A3 A4 A5"
+at2<-commune2%>%
+  filter(str_detect(cod,"-"))%>%
+  select(cod)%>%
+  distinct()%>%
   mutate(liste_cd=map_chr(.$cod,fn_ival))
 #
 ## B. sans tiret A40
-stir<-commune2%>%
-  select(lst2,cod)%>%
-  filter(!str_detect(cod,"-"))
-# remplacer les points
-stir$cod<-str_replace_all(stir$cod,rep_str)
 #
 # Fonction transformation de code(père) CIM (p ex A41)
 fn_transfo_unique<- function(unique){
@@ -207,7 +290,8 @@ fn_transfo_unique<- function(unique){
     paste0(collapse = " ")
 }
 #
-stir2<-stir%>%
+stir2<-commune2%>%
+  filter(!str_detect(cod,"-"))%>%
   select(cod)%>%
   distinct()%>%
   mutate(liste_cd=map_chr(.$cod,fn_transfo_unique))
@@ -215,27 +299,27 @@ stir2<-stir%>%
 ## versions verticale et horizontale ###
 # vecteurs chr horizontaux transformés en verticaux
 #
-horiz<-stir2%>%
-  bind_rows(.,at2)
-#
-commune2$cod<-str_replace_all(commune2$cod,rep_str) # rep_str cf ligne 164
-#
 reun<-commune2%>%
-  left_join(.,horiz)%>%
+  left_join(.,stir2%>%
+              bind_rows(.,at2))%>% 
   mutate(code_cim_10 = str_split(liste_cd," "))%>%
   unnest(cols = c(code_cim_10))%>%
   rename(liste_ex=lst2,cod_interv=cod,liste_cim_10=liste_cd)
 #
-str(reun)
+# Annexe 5-1 (+année)
+a5_1<-assign(paste0("ann_5_1_",an),reun%>%
+         select(liste_ex,code_cim_10)%>%
+         distinct())
 #
-# ecrire .csv trop long >1million238K lignes
-ann_5_1<-reun%>%
-  select(liste_ex,code_cim_10)%>%
-  distinct()
-str(ann_5_1)
-#
-write_csv2(ann_5_1,file = "ann_5_1.csv")
+write_csv2(a5_1,file = paste0("tb_annexe_5_1_",an,".csv"))
+toc()
 # 56.81 sec
+# 
+## Evolution des listes d'exclusion ####
+# ajout-suppression
+diff_24_23_annx_1<-ann_5_1_2024%>%
+  anti_join(.,ann_5_1_2023)
+# différence concerne la liste 800, les codes en E dont la denutrition: ERREUR de script!
 #
 ##################################################################################################################
 #               ANNEXE  
@@ -254,12 +338,13 @@ library(tictoc)
 # Extraction des données brutes du fichier PDF ####
 
 # sous forme de large character
+an<-2024
 #
-ex_pdf <- pdf_text(pdf ="C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+ex_pdf <- pdf_text(pdf = paste0("C:/Users/4011297/Documents/R/Manuel_GHM_extractions_annexes/man_ghm_",an,"_vol_1.pdf"))
 #
 # sous forme de large list
 #
-extra_pdf<-pdf_data(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_23_vol_1.pdf")
+extra_pdf<-pdf_data(paste0(pdf = "~/R/Manuel_GHM_extractions_annexes/man_ghm_",an,"_vol_1.pdf"))
 #
 # Trouver les numeros de pages ####
 # pour lesquelles "Annexe 5-" present: limiter aux pages utiles
@@ -296,7 +381,7 @@ pages2<-pages%>%
 ### Tableau des racines de GHM #
 tb_rghm <-
   nomensland::get_table("ghm_rghm_regroupement") %>%
-  filter(anseqta==2023) %>%
+  filter(anseqta==2023) %>%  #                      remplacer par année la plus récente disponible
   select(racine) %>% 
   rename("code_racine"="racine")
 #
@@ -366,7 +451,7 @@ tb_annexe_5_2 <-tb_a_modifier %>%
 #
 ## Export tableau Annexe 5 _ 2 #
 #
-write.csv2(tb_annexe_5_2,file="tb1_annexe_5_2.csv",row.names = F)
+write.csv2(tb_annexe_5_2,file=paste0("tb1_annexe_5_2_",an,".csv"),row.names = F)
 #
 ########## Annexe 5-2: Autre procédé (pdf_table, boucle for) ################################################
 # avec boucle for et selon position x
