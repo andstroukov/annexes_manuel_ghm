@@ -9,7 +9,7 @@ library(tictoc)
 ## Import CIM10
 #
 rm(list = ls())
-#
+# #
 tic()
 tb_cim_10_comp <-
   nomensland::get_table("cim")%>%
@@ -18,7 +18,7 @@ tb_cim_10_comp <-
   arrange(code)
 #
 # Lettres dans l'ordre pour retrouver les numéros des listes
-tb_lettre <- tibble(lettre = LETTERS, ordre = 1:length(LETTERS))
+# tb_lettre <- tibble(lettre = LETTERS, ordre = 1:length(LETTERS))
 #
 # Extraction des données brutes du fichier PDF ####
 #
@@ -76,10 +76,11 @@ pages2<-pages%>%
 by=join_by(y >= ymin, y <= ymax)# jointure par les coordonnées
 #
 ## Import tableau avec coordonnées
-commune<-tibble(lst2=NA,cod=NA,x=NA,y=NA)
 #
-for (i in min(pages1):max(pages1)) {
-  pg<-extra_pdf[[i]]
+# utiliser la fonction à la place de boucle
+#
+f_extract<-function(num_page){
+  pg<-extra_pdf[[num_page]]
   ymin<-pg%>%     # valeur "y" min du code avec coordonnée x=103 
     filter(x==106,str_detect(text,"^[A-Z]"))%>%
     select(ymin=y)%>%
@@ -96,89 +97,19 @@ for (i in min(pages1):max(pages1)) {
   list_pg<-pg%>%  # extraction codes
     filter(str_detect(text,"^[A-Z]"),y<795)%>% # pour exclure la dernière ligne de texte
     select(x,y,cod=text)
-  full<-list_pg%>% # ajout numéro de liste aux codes avec coordonnées de la page
+  list_pg%>% # ajout numéro de liste aux codes avec coordonnées de la page
     left_join(.,y_list,by)%>% # jointure par y entre ymin et ymax
     mutate(lst2=if_else(is.na(lst)&y<ymin_p,min_list-1,lst))%>% # numero liste = min-1 si abs
-    select(lst2,cod,x,y)
-  commune<-commune%>% # enchainement des pages
-    bind_rows(.,full)%>%
+    select(lst2,cod,x,y)%>%
     filter(lst2>0)%>%
     distinct()
 }
 #
-# Faire tableau agrégé num.page-num.liste(avec son y)
-pali<-tibble(pg=NA,li=NA,y=NA)
+# extraction toutes les pages
+commune <- 
+  map_df(min(pages1):(max(pages1)),f_extract)
 #
-for (i in min(pages1):max(pages1)) {
-  pg<-extra_pdf[[i]]
-foe<-pg%>%
-  filter(x>73,x<92,str_detect(text,"^\\s*[0-9]*\\s*$"))%>%
-  mutate(li=as.integer(text),pg=i)%>%
-  select(pg,li,y)%>%
-  arrange(pg)
-pali<-pali%>%
-  bind_rows(.,foe)
-}
-
-# Fonction pour extraire les codes du pdf
-#
-fn_extra_page <- function(num_page){
-  tb1<-tibble(page=num_page, # numero de page
-           extra_pdf[[num_page]] %>% # numero de liste avec son "y"
-           filter(x>73,x<92,str_detect(text,"^\\s*[0-9]*\\s*$"))%>%
-           select(liste=text,ymax_liste=y)
-           )
-  tb2<-tibble(page=num_page, # numero de page
-         extra_pdf[[num_page]] %>% # cod avec son "y"
-           filter(str_detect(text,"^[A-Z]"),y<795,x==106)) # pour exclure la dernière ligne de texte
-  tb3<-tb2%>%
-    group_by(page)%>%
-    mutate(list_page_haut=min(y))%>%
-    ungroup()%>%
-    select(ymin_liste=y,list_page_haut)
-    
-  tb1%>%
-    cbind(tb3)
-}
-#
-fn_extra_cod<-function(num_page) {
-  tibble(page=num_page,extra_pdf[[num_page]]%>%
-           filter(str_detect(text,"^[A-Z]"),y<795))
-}
-#
-extra_pages <- 
-  map_df(min(pages1):(min(pages1)+1),fn_extra_page)
-#
-extra_cod <- 
-  map_df(min(pages1):(min(pages1)+1),fn_extra_cod)
-# pour une page donnée, pouvoir joindre les 2 tables en utilisant les y min et y max
-# prevoir jointure conditionnelle
-#
-by=join_by(page,y >= ymin_liste, y <= ymax_liste)
-#
-ex_2<-extra_cod%>%
-  left_join(.,extra_pages,by)%>%
-  group_by(page)%>%
-  mutate(ymin_page=min(ymin_liste,na.rm = TRUE),
-         listmin_page=as.integer(min(liste,na.rm=TRUE)),
-         liste=if_else(is.na(liste),listmin_page-1,liste))%>%
-  ungroup()
-str(ex_2)
-#
-# nettoyer les listes pour ne laisser que les codes ###
-#
-ex_co<-extra_cod%>%
-  filter(deb_ls_y==1)%>%
-  group_by(page)%>%
-  mutate(list_page_haut=min(y))%>%
-  select(page,ymin_liste=y)%>%
-  ungroup()
-
-# ambar
-%>%
-  filter(!str_detect(ligne,"Liste")) %>%
-  filter(!str_detect(ligne,"Manuel")) %>%
-  filter(ligne!="") 
+################################################################################
 #
 ## Nettoyage des codes agrégés (p ex "A3-A5") ###
 #
@@ -313,7 +244,7 @@ a5_1<-assign(paste0("ann_5_1_",an),reun%>%
 #
 write_csv2(a5_1,file = paste0("tb_annexe_5_1_",an,".csv"))
 toc()
-# 56.81 sec
+# 57.39 sec
 # 
 ## Evolution des listes d'exclusion ####
 # ajout-suppression
