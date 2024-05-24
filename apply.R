@@ -81,3 +81,4 @@ bar <- function(n, x) replicate(n, foo(x = x))
 bar(5, x = 3)
 bar(6,x=4)
 #
+gitcreds::gitcreds_set()
