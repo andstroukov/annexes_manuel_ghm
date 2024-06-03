@@ -14,10 +14,7 @@ fn_extraction_annexe_4_mghm <- function(chemin_fichier_pdf,
   
   message("\nExtraction des données - ce script prends une dizaine de secondes à être exécuté\n.")
   
-  
   # Extraction des données brutes du fichier PDF
-  
-  
   
   ex_pdf <- pdf_text(pdf = chemin_fichier_pdf)
   extra_pdf<-pdf_data(pdf = chemin_fichier_pdf)
