@@ -4,7 +4,6 @@
 library(tidyverse)
 library(pdftools)
 library(nomensland)
-library(tictoc)
 # 
 ## Import CIM10
 #
