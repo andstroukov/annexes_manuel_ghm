@@ -1,6 +1,6 @@
 #' Extraction, de l'annexe 4 du manuel des GHM
 #' code CIM 10 , CMA, numéro de liste d'exclusion
-
+#
 library(tidyverse)
 library(pdftools)
 
