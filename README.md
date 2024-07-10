@@ -7,7 +7,7 @@ Certains tableaux fournies dans la version pdf du Manuel de GHM n'ont pas d'équ
 Annexes 4 5 
 Autres annexes pertinents du manuel GHM
 
-A. Preparer un code source fonctionnel
+A. Preparer un code fonctionnel: fait
 
 B. Tester la reproductibilité sur les version du Manuel GHM des années 2024 et 2022
 
